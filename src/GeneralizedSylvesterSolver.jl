@@ -13,7 +13,9 @@ import LinearAlgebra: ldiv!, mul!
 export GeneralizedSylvesterWs,
        generalized_sylvester_solver!,
        generalized_sylvester_factorize!,
-       generalized_sylvester_solve!
+       generalized_sylvester_solve!,
+       generalized_sylvester_factorize_transpose!,
+       generalized_sylvester_solve_transpose!
 
 struct GeneralizedSylvesterWs
     ma::Int64
@@ -31,6 +33,12 @@ struct GeneralizedSylvesterWs
     linsolve::LUWs
     schur_b::SchurWs
     schur_c::SchurWs
+    b1_t::Matrix{Float64}
+    c1_t::Matrix{Float64}
+    s2_t::QuasiUpperTriangular{Float64,Matrix{Float64}}
+    t2_t::QuasiUpperTriangular{Float64,Matrix{Float64}}
+    schur_bt::SchurWs
+    schur_ct::SchurWs
     function GeneralizedSylvesterWs(ma::Int64, mb::Int64, mc::Int64, order::Int64)
         if mb != ma
             DimensionMismatch("a has $ma rows but b has $mb rows")
@@ -48,7 +56,14 @@ struct GeneralizedSylvesterWs
         work3 = Vector{Float64}(undef, ma*mc^order)
         work4 = Vector{Float64}(undef, ma*mc^order)
         result = Matrix{Float64}(undef, ma,mc^order)
-        new(ma, mb, b1, c1, a1, s2, t2, work1, work2, work3, work4, result, linsolve, schur_b, schur_c)
+        b1_t = Matrix{Float64}(undef, mb,mb)
+        c1_t = Matrix{Float64}(undef, mc,mc)
+        s2_t = QuasiUpperTriangular(Matrix{Float64}(undef, mc,mc))
+        t2_t = QuasiUpperTriangular(Matrix{Float64}(undef, mb,mb))
+        schur_bt = SchurWs(b1_t)
+        schur_ct = SchurWs(c1_t)
+        new(ma, mb, b1, c1, a1, s2, t2, work1, work2, work3, work4, result, linsolve, schur_b, schur_c,
+            b1_t, c1_t, s2_t, t2_t, schur_bt, schur_ct)
     end
 end
 
@@ -77,6 +92,36 @@ function generalized_sylvester_solve!(d::AbstractMatrix, order::Int64, ws::Gener
     solve1!(1.0, order, t, ws.t2, s, ws.s2, vec(d), ws)
     a_mul_b_kron_ct!(ws.result, ws.schur_b.vs, d, ws.schur_c.vs, order, ws.work2, ws.work3)
     copy!(d, reshape(ws.result, ws.ma, size(ws.c1, 1)^order))
+end
+
+# Solves the transposed system: A'·P + B'·P·(C'⊗...⊗C') = Ȳ
+# Must be preceded by generalized_sylvester_factorize!, which caches LU(A) in ws.a1.
+# factorize_transpose! computes new Schur decompositions of (A')⁻¹B' and C' into
+# dedicated _t fields; the LU of A is reused at zero cost via transpose solve.
+function generalized_sylvester_factorize_transpose!(b::AbstractMatrix, c::AbstractMatrix,
+                                                    order::Int64, ws::GeneralizedSylvesterWs)
+    factors = LinearAlgebra.LU(ws.a1, ws.linsolve.ipiv, 0)
+    copy!(ws.b1_t, b')
+    ldiv!(transpose(factors), ws.b1_t)
+    copy!(ws.c1_t, c')
+    Schur(LAPACK.gees!(ws.schur_bt, 'V', ws.b1_t)...)
+    Schur(LAPACK.gees!(ws.schur_ct, 'V', ws.c1_t)...)
+    t_t = QuasiUpperTriangular(ws.b1_t)
+    mul!(ws.t2_t, t_t, t_t)
+    s_t = QuasiUpperTriangular(ws.c1_t)
+    mul!(ws.s2_t, s_t, s_t)
+end
+
+function generalized_sylvester_solve_transpose!(d::AbstractMatrix, order::Int64, ws::GeneralizedSylvesterWs)
+    factors = LinearAlgebra.LU(ws.a1, ws.linsolve.ipiv, 0)
+    ldiv!(transpose(factors), d)
+    t_t = QuasiUpperTriangular(ws.b1_t)
+    s_t = QuasiUpperTriangular(ws.c1_t)
+    at_mul_b_kron_c!(ws.result, ws.schur_bt.vs, d, ws.schur_ct.vs, order, ws.work2, ws.work3)
+    copy!(d, ws.result)
+    solve1!(1.0, order, t_t, ws.t2_t, s_t, ws.s2_t, vec(d), ws)
+    a_mul_b_kron_ct!(ws.result, ws.schur_bt.vs, d, ws.schur_ct.vs, order, ws.work2, ws.work3)
+    copy!(d, reshape(ws.result, ws.ma, size(ws.c1_t, 1)^order))
 end
 
 function generalized_sylvester_solver!(a::AbstractMatrix, b::AbstractMatrix, c::AbstractMatrix,

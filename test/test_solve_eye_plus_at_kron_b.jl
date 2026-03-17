@@ -1,6 +1,7 @@
 import GeneralizedSylvesterSolver: GeneralizedSylvesterWs, solvi_real_eliminate!,
     QuasiUpperTriangular, solve1!, transformation1, transform2,
     generalized_sylvester_solver!, generalized_sylvester_factorize!, generalized_sylvester_solve!,
+    generalized_sylvester_factorize_transpose!, generalized_sylvester_solve_transpose!,
     solvi_complex_eliminate!, solviip_complex_eliminate!, solver!,
     solvii, solviip, solviip2, solviip_real_eliminate!
 
@@ -318,6 +319,23 @@ generalized_sylvester_solver!(copy(a_orig2),copy(b_orig2),copy(c_orig2),d1,depth
 generalized_sylvester_factorize!(copy(a_orig2),copy(b_orig2),copy(c_orig2),depth2,ws2)
 generalized_sylvester_solve!(d2,depth2,ws2)
 @test d1 ≈ d2
+
+# Test factorize_transpose! + solve_transpose!
+# Solves: A'·P + B'·P·(C'⊗C') = Ȳ
+# Vectorized: (I⊗A' + (C⊗C)⊗B')·vec(P) = vec(Ȳ)
+for depth_t in (1, 2)
+    local n1_t = 4; local n2_t = 3
+    local a_t = randn(n1_t,n1_t); local b_t = randn(n1_t,n1_t); local c_t = randn(n2_t,n2_t)
+    local ybar_orig = randn(n1_t, n2_t^depth_t)
+    local ybar = copy(ybar_orig)
+    local ws_t = GeneralizedSylvesterWs(n1_t,n1_t,n2_t,depth_t)
+    generalized_sylvester_factorize!(copy(a_t),copy(b_t),copy(c_t),depth_t,ws_t)
+    generalized_sylvester_factorize_transpose!(b_t,c_t,depth_t,ws_t)
+    generalized_sylvester_solve_transpose!(ybar,depth_t,ws_t)
+    kron_c = depth_t == 1 ? c_t : kron(c_t,c_t)
+    P_expected = reshape((kron(I(n2_t^depth_t),a_t') + kron(kron_c,b_t')) \ vec(ybar_orig), n1_t, n2_t^depth_t)
+    @test ybar ≈ P_expected
+end
 
 function f(t,s,d,depth,ws)
     for i = 1:100

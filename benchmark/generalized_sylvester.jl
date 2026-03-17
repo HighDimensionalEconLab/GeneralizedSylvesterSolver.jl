@@ -79,6 +79,50 @@ end setup = begin
     ws = GeneralizedSylvesterWs(4, 4, 4, 2)
 end evals = 1
 
+# ── Transpose API: factorize_transpose! and solve_transpose! ─────────────────
+# Models the AD (VJP) use case: primal factorize! once, then solve_transpose!
+# with a different RHS reusing all cached decompositions.
+# "factorize_t_only" times only the transpose Schur phase (reuses LU of A).
+# "solve_t_only" times only the back-substitution with pre-built transpose factors.
+# "factorize_and_solve_t" times the full transpose phase seen in a VJP.
+
+GS_SUITE["4x4_order2_factorize_t_only"] = @benchmarkable begin
+    generalized_sylvester_factorize_transpose!(b, c, 2, ws)
+end setup = begin
+    Random.seed!(42)
+    a = randn(4, 4)
+    b = randn(4, 4)
+    c = randn(4, 4)
+    ws = GeneralizedSylvesterWs(4, 4, 4, 2)
+    generalized_sylvester_factorize!(a, b, c, 2, ws)
+end evals = 1
+
+GS_SUITE["4x4_order2_solve_t_only"] = @benchmarkable begin
+    generalized_sylvester_solve_transpose!(ybar, 2, ws)
+end setup = begin
+    Random.seed!(42)
+    a = randn(4, 4)
+    b = randn(4, 4)
+    c = randn(4, 4)
+    ybar = randn(4, 16)
+    ws = GeneralizedSylvesterWs(4, 4, 4, 2)
+    generalized_sylvester_factorize!(a, b, c, 2, ws)
+    generalized_sylvester_factorize_transpose!(b, c, 2, ws)
+end evals = 1
+
+GS_SUITE["4x4_order2_factorize_and_solve_t"] = @benchmarkable begin
+    generalized_sylvester_factorize_transpose!(b, c, 2, ws)
+    generalized_sylvester_solve_transpose!(ybar, 2, ws)
+end setup = begin
+    Random.seed!(42)
+    a = randn(4, 4)
+    b = randn(4, 4)
+    c = randn(4, 4)
+    ybar = randn(4, 16)
+    ws = GeneralizedSylvesterWs(4, 4, 4, 2)
+    generalized_sylvester_factorize!(a, b, c, 2, ws)
+end evals = 1
+
 # ── Large: 10×10 matrices, orders 1–3 ────────────────────────────────────────
 # Matches the matrix size used in PolynomialMatrixEquations.jl tests (the
 # closest upstream package in the DynareJulia org that exercises this scale).
