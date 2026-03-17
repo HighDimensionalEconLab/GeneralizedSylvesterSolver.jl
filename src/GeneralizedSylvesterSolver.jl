@@ -8,16 +8,19 @@ using QuasiTriangular
 using FastLapackInterface
 using KroneckerTools
 using LinearAlgebra
+import LinearAlgebra: ldiv!, mul!
 
-export GeneralizedSylvesterWs, generalized_sylvester_solver!
+export GeneralizedSylvesterWs,
+       generalized_sylvester_solver!,
+       generalized_sylvester_factorize!,
+       generalized_sylvester_solve!
 
 struct GeneralizedSylvesterWs
     ma::Int64
     mb::Int64
     b1::Matrix{Float64}
     c1::Matrix{Float64}
-    vs_b::Matrix{Float64}
-    vs_c::Matrix{Float64}
+    a1::Matrix{Float64}
     s2::QuasiUpperTriangular{Float64,Matrix{Float64}}
     t2::QuasiUpperTriangular{Float64,Matrix{Float64}}
     work1::Vector{Float64}
@@ -34,8 +37,7 @@ struct GeneralizedSylvesterWs
         end
         b1 = Matrix{Float64}(undef, mb,mb)
         c1 = Matrix{Float64}(undef, mc,mc)
-        vs_b = Matrix{Float64}(undef, mb,mb)
-        vs_c = Matrix{Float64}(undef, mc,mc)
+        a1 = Matrix{Float64}(undef, ma,ma)
         s2 = QuasiUpperTriangular(Matrix{Float64}(undef, mc,mc))
         t2 = QuasiUpperTriangular(Matrix{Float64}(undef, mb,mb))
         linsolve = LUWs(ma)
@@ -46,33 +48,41 @@ struct GeneralizedSylvesterWs
         work3 = Vector{Float64}(undef, ma*mc^order)
         work4 = Vector{Float64}(undef, ma*mc^order)
         result = Matrix{Float64}(undef, ma,mc^order)
-        new(ma, mb, b1, c1, vs_b, vs_c, s2, t2, work1, work2, work3, work4, result, linsolve, schur_b, schur_c)
+        new(ma, mb, b1, c1, a1, s2, t2, work1, work2, work3, work4, result, linsolve, schur_b, schur_c)
     end
 end
 
-function generalized_sylvester_solver!(a::AbstractMatrix,b::AbstractMatrix,c::AbstractMatrix,
-                                   d::AbstractMatrix,order::Int64,ws::GeneralizedSylvesterWs)
-    copy!(ws.b1,b)
-    copy!(ws.c1,c)
-    ws_a = copy(a) 
-
-    factors = LinearAlgebra.LU( LAPACK.getrf!(ws.linsolve, ws_a)... )
+function generalized_sylvester_factorize!(a::AbstractMatrix, b::AbstractMatrix, c::AbstractMatrix,
+                                          order::Int64, ws::GeneralizedSylvesterWs)
+    copy!(ws.a1, a)
+    copy!(ws.b1, b)
+    copy!(ws.c1, c)
+    factors = LinearAlgebra.LU(LAPACK.getrf!(ws.linsolve, ws.a1)...)
     ldiv!(factors, ws.b1)
-    ldiv!(factors, d) 
-    
     Schur(LAPACK.gees!(ws.schur_b, 'V', ws.b1)...)
     Schur(LAPACK.gees!(ws.schur_c, 'V', ws.c1)...)
-
     t = QuasiUpperTriangular(ws.b1)
-    mul!(ws.t2,t,t)
+    mul!(ws.t2, t, t)
     s = QuasiUpperTriangular(ws.c1)
-    mul!(ws.s2,s,s)
+    mul!(ws.s2, s, s)
+end
+
+function generalized_sylvester_solve!(d::AbstractMatrix, order::Int64, ws::GeneralizedSylvesterWs)
+    factors = LinearAlgebra.LU(ws.a1, ws.linsolve.ipiv, 0)
+    ldiv!(factors, d)
+    t = QuasiUpperTriangular(ws.b1)
+    s = QuasiUpperTriangular(ws.c1)
     at_mul_b_kron_c!(ws.result, ws.schur_b.vs, d, ws.schur_c.vs, order, ws.work2, ws.work3)
     copy!(d, ws.result)
-
     solve1!(1.0, order, t, ws.t2, s, ws.s2, vec(d), ws)
     a_mul_b_kron_ct!(ws.result, ws.schur_b.vs, d, ws.schur_c.vs, order, ws.work2, ws.work3)
-    copy!(d, reshape(ws.result, size(a, 1), size(c, 2)^order))
+    copy!(d, reshape(ws.result, ws.ma, size(ws.c1, 1)^order))
+end
+
+function generalized_sylvester_solver!(a::AbstractMatrix, b::AbstractMatrix, c::AbstractMatrix,
+                                       d::AbstractMatrix, order::Int64, ws::GeneralizedSylvesterWs)
+    generalized_sylvester_factorize!(a, b, c, order, ws)
+    generalized_sylvester_solve!(d, order, ws)
 end
 
 

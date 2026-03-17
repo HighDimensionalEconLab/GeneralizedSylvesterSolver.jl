@@ -3,6 +3,9 @@ uuid = "3b00829b-373b-4a35-afa6-09f888b04ecd"
 authors = ["MichelJuillard <michel.juillard@mjui.fr>"]
 version = "0.2.1"
 
+[workspace]
+projects = ["benchmark"]
+
 [deps]
 FastLapackInterface = "29a986be-02c6-4525-aec4-84b980013641"
 KroneckerTools = "7e59e93b-e0cb-42c7-aa95-426cb754d61e"

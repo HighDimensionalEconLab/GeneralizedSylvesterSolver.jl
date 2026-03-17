@@ -1,6 +1,7 @@
 import GeneralizedSylvesterSolver: GeneralizedSylvesterWs, solvi_real_eliminate!,
     QuasiUpperTriangular, solve1!, transformation1, transform2,
-    generalized_sylvester_solver!, solvi_complex_eliminate!, solviip_complex_eliminate!, solver!,
+    generalized_sylvester_solver!, generalized_sylvester_factorize!, generalized_sylvester_solve!,
+    solvi_complex_eliminate!, solviip_complex_eliminate!, solver!,
     solvii, solviip, solviip2, solviip_real_eliminate!
 
 using LinearAlgebra    
@@ -302,12 +303,28 @@ generalized_sylvester_solver!(a,b,c,d,2,ws)
 @test a_orig*d + b_orig*d*kron(c_orig,c_orig) ≈ d_orig
 @test d ≈ reshape((kron(I(n2^depth),a_orig) + kron(kron(c_orig',c_orig'),b_orig))\vec(d_orig),n1,n2^depth)
 
+n1 = 4
+n2 = 3
+a_orig2 = randn(n1,n1)
+b_orig2 = randn(n1,n1)
+c_orig2 = randn(n2,n2)
+depth2 = 2
+d_orig2 = randn(n1,n2^depth2)
+ws1 = GeneralizedSylvesterWs(n1,n1,n2,depth2)
+ws2 = GeneralizedSylvesterWs(n1,n1,n2,depth2)
+d1 = copy(d_orig2)
+d2 = copy(d_orig2)
+generalized_sylvester_solver!(copy(a_orig2),copy(b_orig2),copy(c_orig2),d1,depth2,ws1)
+generalized_sylvester_factorize!(copy(a_orig2),copy(b_orig2),copy(c_orig2),depth2,ws2)
+generalized_sylvester_solve!(d2,depth2,ws2)
+@test d1 ≈ d2
+
 function f(t,s,d,depth,ws)
     for i = 1:100
         solver!(t,s,d,depth,ws)
     end
 end
-    
+
 #@profile  f(t,s,d,depth,ws)
 #Profile.print(combine=true,sortedby=:count)
 
