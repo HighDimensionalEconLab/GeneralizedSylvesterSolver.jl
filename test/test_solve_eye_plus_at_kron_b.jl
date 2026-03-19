@@ -337,6 +337,70 @@ for depth_t in (1, 2)
     @test ybar ≈ P_expected
 end
 
+@testset "rank-deficient b matrix (dense fallback)" begin
+    # Construct a problem where b is rank-deficient (rank r << n).
+    # The dense fallback (Schur reorder + direct solve of r-block) handles this.
+    Random.seed!(2)
+    n1 = 6; n2 = 3; r = 2
+
+    a_orig = Matrix{Float64}(I, n1, n1)
+    U = 0.3 * randn(n1, r)
+    V = 0.3 * randn(n1, r)
+    b_orig = U * V'
+    c_orig = 0.3 * randn(n2, n2)
+
+    for depth in 1:2
+        ws = GeneralizedSylvesterWs(n1, n1, n2, depth)
+        d_orig = randn(n1, n2^depth)
+        C_kron = depth == 1 ? c_orig : kron(c_orig, c_orig)
+
+        # Default (dense fallback) should work
+        a, b, c, d = copy(a_orig), copy(b_orig), copy(c_orig), copy(d_orig)
+        generalized_sylvester_solver!(a, b, c, d, depth, ws)
+        @test a_orig * d + b_orig * d * C_kron ≈ d_orig
+
+        # Without dense fallback (deflate_tol=0.0), the recursive solver fails
+        a3, b3, c3, d3 = copy(a_orig), copy(b_orig), copy(c_orig), copy(d_orig)
+        generalized_sylvester_solver!(a3, b3, c3, d3, depth, ws; balance=false, deflate_tol=0.0)
+        res_raw = norm(a_orig * d3 + b_orig * d3 * C_kron - d_orig) / norm(d_orig)
+        @test res_raw > 0.1
+    end
+end
+
+@testset "DSGE model fixtures (order=2)" begin
+    include(joinpath(@__DIR__, "..", "benchmark", "dsge_fixtures.jl"))
+    # RBC and SGU have valid E_SYL; test them directly
+    for (label, A, B, C, E) in [
+        ("RBC",  RBC_A_SYL,  RBC_C_SYL,  RBC_H_X,  RBC_E_SYL),
+        ("SGU",  SGU_A_SYL,  SGU_C_SYL,  SGU_H_X,  SGU_E_SYL),
+    ]
+        @testset "$label" begin
+            n, nx = size(A, 1), size(C, 1)
+            ws = GeneralizedSylvesterWs(n, n, nx, 2)
+            a, b, c, d = copy(A), copy(B), copy(C), copy(E)
+            generalized_sylvester_solver!(a, b, c, d, 2, ws)
+            C_kron = kron(C, C)
+            residual = norm(A * d + B * d * C_kron - E) / norm(E)
+            @test residual < 1e-8
+        end
+    end
+    # FVGQ: rank-deficient B (rank 6 out of 38). Test with synthetic RHS
+    # since the fixture E_SYL is zero (extracted from a failed solve).
+    @testset "FVGQ (synthetic RHS)" begin
+        A, B, C = FVGQ_A_SYL, FVGQ_C_SYL, FVGQ_H_X
+        n, nx = size(A, 1), size(C, 1)
+        Random.seed!(1234)
+        X_true = randn(n, nx^2) * 0.01
+        C_kron = kron(C, C)
+        E = A * X_true + B * X_true * C_kron
+        ws = GeneralizedSylvesterWs(n, n, nx, 2)
+        a, b, c, d = copy(A), copy(B), copy(C), copy(E)
+        generalized_sylvester_solver!(a, b, c, d, 2, ws)
+        residual = norm(A * d + B * d * C_kron - E) / norm(E)
+        @test residual < 1e-7
+    end
+end
+
 function f(t,s,d,depth,ws)
     for i = 1:100
         solver!(t,s,d,depth,ws)
