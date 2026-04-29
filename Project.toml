@@ -13,7 +13,7 @@ LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 QuasiTriangular = "e29349eb-b3c8-4189-b6e7-6b7aca9b1830"
 
 [compat]
-julia = "1.12"
+julia = "1.10.7"
 FastLapackInterface = "2.0.0"
 KroneckerTools = "0.2.0"
 QuasiTriangular = "0.2.0"

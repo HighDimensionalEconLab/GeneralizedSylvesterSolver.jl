@@ -354,21 +354,21 @@ end
         d_orig = randn(n1, n2^depth)
         C_kron = depth == 1 ? c_orig : kron(c_orig, c_orig)
 
-        # Default (dense fallback) should work
+        # With dense fallback opted in (deflate_tol=-1.0), the solve succeeds
         a, b, c, d = copy(a_orig), copy(b_orig), copy(c_orig), copy(d_orig)
-        generalized_sylvester_solver!(a, b, c, d, depth, ws)
+        generalized_sylvester_solver!(a, b, c, d, depth, ws; balance=true, deflate_tol=-1.0)
         @test a_orig * d + b_orig * d * C_kron ≈ d_orig
 
-        # Without dense fallback (deflate_tol=0.0), the recursive solver fails
+        # With upstream-matching defaults (no fallback), the recursive solver fails
         a3, b3, c3, d3 = copy(a_orig), copy(b_orig), copy(c_orig), copy(d_orig)
-        generalized_sylvester_solver!(a3, b3, c3, d3, depth, ws; balance=false, deflate_tol=0.0)
+        generalized_sylvester_solver!(a3, b3, c3, d3, depth, ws)
         res_raw = norm(a_orig * d3 + b_orig * d3 * C_kron - d_orig) / norm(d_orig)
         @test res_raw > 0.1
     end
 end
 
 @testset "DSGE model fixtures (order=2)" begin
-    include(joinpath(@__DIR__, "..", "benchmark", "dsge_fixtures.jl"))
+    include(joinpath(@__DIR__, "dsge_fixtures.jl"))
     # RBC and SGU have valid E_SYL; test them directly
     for (label, A, B, C, E) in [
         ("RBC",  RBC_A_SYL,  RBC_C_SYL,  RBC_H_X,  RBC_E_SYL),
@@ -395,7 +395,7 @@ end
         E = A * X_true + B * X_true * C_kron
         ws = GeneralizedSylvesterWs(n, n, nx, 2)
         a, b, c, d = copy(A), copy(B), copy(C), copy(E)
-        generalized_sylvester_solver!(a, b, c, d, 2, ws)
+        generalized_sylvester_solver!(a, b, c, d, 2, ws; balance=true, deflate_tol=-1.0)
         residual = norm(A * d + B * d * C_kron - E) / norm(E)
         @test residual < 1e-7
     end

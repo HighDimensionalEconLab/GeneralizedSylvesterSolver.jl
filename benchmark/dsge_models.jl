@@ -3,7 +3,7 @@ using GeneralizedSylvesterSolver
 
 # Real DSGE matrices extracted from DifferentiablePerturbation.jl second-order perturbation.
 # See dsge_fixtures.jl for provenance and regeneration instructions.
-include(joinpath(pkgdir(GeneralizedSylvesterSolver), "benchmark", "dsge_fixtures.jl"))
+include(joinpath(pkgdir(GeneralizedSylvesterSolver), "test", "dsge_fixtures.jl"))
 
 const DSGE_SUITE = BenchmarkGroup()
 

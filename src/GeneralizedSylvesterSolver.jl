@@ -25,7 +25,7 @@ struct RankDeficientData
     dense_lu::LinearAlgebra.LU{Float64, Matrix{Float64}, Vector{Int64}}  # LU of (I + kron(kron(S',S'), T22))
 end
 
-mutable struct GeneralizedSylvesterWs
+struct GeneralizedSylvesterWs
     ma::Int64
     mb::Int64
     b1::Matrix{Float64}
@@ -56,9 +56,11 @@ mutable struct GeneralizedSylvesterWs
     bal_ilo_t::Base.RefValue{Int}
     bal_ihi_t::Base.RefValue{Int}
     bal_scale_t::Vector{Float64}
-    # Rank-deficient dense solve data (nothing when full rank)
-    rddata::Union{Nothing, RankDeficientData}
-    rddata_t::Union{Nothing, RankDeficientData}
+    # Rank-deficient dense solve data (nothing when full rank). Boxed in a
+    # Ref so the workspace itself can stay immutable while still allowing
+    # rddata to be (re)assigned during factorization.
+    rddata::Base.RefValue{Union{Nothing, RankDeficientData}}
+    rddata_t::Base.RefValue{Union{Nothing, RankDeficientData}}
     function GeneralizedSylvesterWs(ma::Int64, mb::Int64, mc::Int64, order::Int64)
         if mb != ma
             DimensionMismatch("a has $ma rows but b has $mb rows")
@@ -88,11 +90,13 @@ mutable struct GeneralizedSylvesterWs
         bal_ilo_t = Ref(1)
         bal_ihi_t = Ref(ma)
         bal_scale_t = ones(Float64, ma)
+        rddata = Ref{Union{Nothing, RankDeficientData}}(nothing)
+        rddata_t = Ref{Union{Nothing, RankDeficientData}}(nothing)
         new(ma, mb, b1, c1, a1, s2, t2, work1, work2, work3, work4, result, linsolve, schur_b, schur_c,
             bal_ilo, bal_ihi, bal_scale,
             b1_t, c1_t, s2_t, t2_t, schur_bt, schur_ct,
             bal_ilo_t, bal_ihi_t, bal_scale_t,
-            nothing, nothing)
+            rddata, rddata_t)
     end
 end
 
@@ -196,7 +200,7 @@ end
 
 function generalized_sylvester_factorize!(a::AbstractMatrix, b::AbstractMatrix, c::AbstractMatrix,
                                           order::Int64, ws::GeneralizedSylvesterWs;
-                                          balance::Bool=true, deflate_tol::Float64=-1.0)
+                                          balance::Bool=false, deflate_tol::Float64=0.0)
     copy!(ws.a1, a)
     copy!(ws.b1, b)
     copy!(ws.c1, c)
@@ -217,9 +221,9 @@ function generalized_sylvester_factorize!(a::AbstractMatrix, b::AbstractMatrix, 
     Schur(LAPACK.gees!(ws.schur_c, 'V', ws.c1)...)
     # Detect rank deficiency and set up dense fallback if needed
     if deflate_tol != 0.0
-        ws.rddata = _setup_rank_deficient(ws.b1, ws.schur_b.vs, ws.c1, order)
+        ws.rddata[] = _setup_rank_deficient(ws.b1, ws.schur_b.vs, ws.c1, order)
     else
-        ws.rddata = nothing
+        ws.rddata[] = nothing
     end
     t = QuasiUpperTriangular(ws.b1)
     mul!(ws.t2, t, t)
@@ -256,8 +260,8 @@ function generalized_sylvester_solve!(d::AbstractMatrix, order::Int64, ws::Gener
     s = QuasiUpperTriangular(ws.c1)
     at_mul_b_kron_c!(ws.result, ws.schur_b.vs, d, ws.schur_c.vs, order, ws.work2, ws.work3)
     copy!(d, ws.result)
-    if ws.rddata !== nothing
-        _solve_rank_deficient!(d, ws.rddata, size(ws.c1, 1)^order)
+    if ws.rddata[] !== nothing
+        _solve_rank_deficient!(d, ws.rddata[], size(ws.c1, 1)^order)
     else
         solve1!(1.0, order, t, ws.t2, s, ws.s2, vec(d), ws)
     end
@@ -273,7 +277,7 @@ end
 # dedicated _t fields; the LU of A is reused at zero cost via transpose solve.
 function generalized_sylvester_factorize_transpose!(b::AbstractMatrix, c::AbstractMatrix,
                                                     order::Int64, ws::GeneralizedSylvesterWs;
-                                                    balance::Bool=true, deflate_tol::Float64=-1.0)
+                                                    balance::Bool=false, deflate_tol::Float64=0.0)
     factors = LinearAlgebra.LU(ws.a1, ws.linsolve.ipiv, 0)
     copy!(ws.b1_t, b')
     ldiv!(transpose(factors), ws.b1_t)
@@ -291,9 +295,9 @@ function generalized_sylvester_factorize_transpose!(b::AbstractMatrix, c::Abstra
     Schur(LAPACK.gees!(ws.schur_bt, 'V', ws.b1_t)...)
     Schur(LAPACK.gees!(ws.schur_ct, 'V', ws.c1_t)...)
     if deflate_tol != 0.0
-        ws.rddata_t = _setup_rank_deficient(ws.b1_t, ws.schur_bt.vs, ws.c1_t, order)
+        ws.rddata_t[] = _setup_rank_deficient(ws.b1_t, ws.schur_bt.vs, ws.c1_t, order)
     else
-        ws.rddata_t = nothing
+        ws.rddata_t[] = nothing
     end
     t_t = QuasiUpperTriangular(ws.b1_t)
     mul!(ws.t2_t, t_t, t_t)
@@ -309,8 +313,8 @@ function generalized_sylvester_solve_transpose!(d::AbstractMatrix, order::Int64,
     s_t = QuasiUpperTriangular(ws.c1_t)
     at_mul_b_kron_c!(ws.result, ws.schur_bt.vs, d, ws.schur_ct.vs, order, ws.work2, ws.work3)
     copy!(d, ws.result)
-    if ws.rddata_t !== nothing
-        _solve_rank_deficient!(d, ws.rddata_t, size(ws.c1_t, 1)^order)
+    if ws.rddata_t[] !== nothing
+        _solve_rank_deficient!(d, ws.rddata_t[], size(ws.c1_t, 1)^order)
     else
         solve1!(1.0, order, t_t, ws.t2_t, s_t, ws.s2_t, vec(d), ws)
     end
@@ -321,7 +325,7 @@ end
 
 function generalized_sylvester_solver!(a::AbstractMatrix, b::AbstractMatrix, c::AbstractMatrix,
                                        d::AbstractMatrix, order::Int64, ws::GeneralizedSylvesterWs;
-                                       balance::Bool=true, deflate_tol::Float64=-1.0)
+                                       balance::Bool=false, deflate_tol::Float64=0.0)
     generalized_sylvester_factorize!(a, b, c, order, ws; balance, deflate_tol)
     generalized_sylvester_solve!(d, order, ws)
 end
